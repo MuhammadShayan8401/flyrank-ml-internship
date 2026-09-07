@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Predicting Organic-Search Visibility Decline for Content Review Prioritization — Muhammad Shayan Ahmed</title>
+<meta name="description" content="A FlyRank ML Internship capstone: a Logistic Regression decline-risk classifier evaluated against a rule-based baseline, reported honestly — including where the baseline won.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<nav class="paper-nav" aria-label="Section navigation">
+  <div class="paper-nav-inner">
+    <a class="paper-nav-title" href="#top">Visibility-Decline Paper</a>
+    <ul class="paper-nav-links">
+      <li><a href="#abstract">Abstract</a></li>
+      <li><a href="#introduction">1. Introduction</a></li>
+      <li><a href="#data">2. Data</a></li>
+      <li><a href="#methodology">3. Methodology</a></li>
+      <li><a href="#results">4. Results</a></li>
+      <li><a href="#limitations">5. Limitations</a></li>
+      <li><a href="#recommendations">6. Recommendations</a></li>
+      <li><a href="#reproducibility">7. Reproducibility</a></li>
+      <li><a href="#acknowledgments">8. Acknowledgments</a></li>
+    </ul>
+  </div>
+</nav>
+
+<main id="main">
+
+  <header class="hero" id="top">
+    <div class="wrap">
+      <p class="hero-kicker">FlyRank ML Internship — Capstone research paper (ML-11)</p>
+      <h1>Predicting Organic-Search Visibility Decline for Content Review Prioritization</h1>
+      <p class="hero-dek">
+        A Logistic Regression decline-risk classifier, evaluated against an existing rule-based
+        baseline on the same client-grouped holdout — reported honestly, including the part
+        where the simple rule won.
+      </p>
+      <p class="hero-byline">
+        <span><strong>Muhammad Shayan Ahmed</strong></span>
+        <span>·</span>
+        <span>FlyRank ML Internship, Applied Search Intelligence track</span>
+        <span>·</span>
+        <span>Capstone (ML-11), 2026</span>
+      </p>
+
+      <div class="result-strip" role="group" aria-label="Headline result">
+        <div class="result-cell">
+          <p class="result-label">ML-07 heuristic baseline — Precision@50</p>
+          <p class="result-value">92%</p>
+          <p class="result-sub">46 of the top 50 ranked pages were later confirmed declining.</p>
+        </div>
+        <div class="result-cell">
+          <p class="result-label">ML-08 Logistic Regression — Precision@50</p>
+          <p class="result-value">78%</p>
+          <p class="result-sub">39 of the top 50 ranked pages were later confirmed declining.</p>
+        </div>
+        <div class="result-cell">
+          <p class="result-label">Difference</p>
+          <p class="result-value is-decline">&minus;14 pp</p>
+          <p class="result-sub">The learned model did not outperform the baseline it was measured against.</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="section" id="abstract" aria-labelledby="abstract-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">Abstract</span>
+      </div>
+      <p class="abstract-block" id="abstract-h">
+        This paper asks whether historical search-performance and content signals can identify
+        pages likely to see a meaningful organic-search decline, early enough for a content team
+        to prioritize them for review, using a pseudonymized extract of FlyRank's
+        search-performance data covering 30,000 content items across 32 clients. A page is
+        labeled declining when its trailing search impressions fall by more than 20%, and a
+        Logistic Regression classifier trained on 21 historical features is evaluated against an
+        existing rule-based heuristic on the same client-grouped holdout, using Precision@50 as
+        the shared metric. The heuristic baseline reached a Precision@50 of 92%, while the
+        learned model reached 78% &mdash; a 14-percentage-point gap in the baseline's favor. The
+        model therefore did not improve on the existing rule under this evaluation, and this
+        paper reports that result directly rather than reframing the comparison around a
+        friendlier metric. What follows is a full account of the data, method, validation, and
+        error analysis behind that result, plus a ranked review playbook intended to support
+        human decision-making, not to replace it.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="introduction" aria-labelledby="introduction-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">01</span>
+        <h2 id="introduction-h">Introduction &amp; problem statement</h2>
+      </div>
+
+      <p class="lede">
+        A content or SEO team responsible for a large page inventory cannot manually review every
+        page every week. Review capacity is limited, and the practical question is not
+        &ldquo;which pages will decline&rdquo; in the abstract &mdash; it is
+        <strong>which pages should a human look at first</strong>, given everything else that
+        also needs attention.
+      </p>
+
+      <h3>Research question</h3>
+      <p>
+        Can historical search-performance and content signals identify content pages at risk of
+        a meaningful decline in organic-search impressions, so that limited content-review
+        capacity can be prioritized toward them?
+      </p>
+
+      <h3>The decision this supports</h3>
+      <p>
+        The intended output is a directional risk signal for human review &mdash; not an
+        autonomous system. A decline-risk score can be used to prioritize which pages get
+        investigated first: their recent search performance, content relevance, freshness,
+        engagement, and depth. The score does not publish, delete, redirect, rewrite, or
+        otherwise change any page. A human reviewer makes the final call.
+      </p>
+
+      <p>
+        The reason this is worth studying carefully &mdash; rather than just shipping a model
+        &mdash; is that a content team already has a working rule for this decision (the ML-07
+        baseline described below). A learned model is only useful here if it does the
+        prioritization job better than that rule, on the same evaluation. This paper treats that
+        as an open empirical question, not a foregone conclusion.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="data" aria-labelledby="data-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">02</span>
+        <h2 id="data-h">Data</h2>
+      </div>
+
+      <h3>The platform release</h3>
+      <p>
+        FlyRank's internship track runs on a pseudonymized warehouse release,
+        <code>flyrank_pseudonymized_warehouse_release_v20260703</code>, exported July 3, 2026.
+        Its daily search-performance table spans 2025&#8209;01&#8209;27 through
+        2026&#8209;06&#8209;30 and covers roughly 79 million rows across approximately 70
+        pseudonymized clients, hosted as gated Parquet on Hugging Face and queried in place with
+        DuckDB rather than downloaded.
+      </p>
+
+      <h3>The modeling extract used for the headline result</h3>
+      <p>
+        The ML-07/ML-08 comparison reported in this paper &mdash; the 92% vs. 78% result &mdash;
+        was run on a smaller, already-anonymized extract of that platform:
+        <code>content_refresh_anonymized.csv</code>, one row per content item, 30,000 rows across
+        32 pseudonymized clients, with search and engagement metrics aggregated over a trailing
+        90-day window per item. A feature-preparation step expands this from 44 raw columns to
+        52, adding log-scaled traffic features, boolean flags, and the target column.
+      </p>
+
+      <h3>Label definition</h3>
+      <p>
+        The target, <code>is_declining</code>, is 1 when a content item's trend classification
+        is <code>down</code>: impressions in the most recent 30 days fell by more than 20%
+        relative to the preceding 30 days. Under this definition, 54.2% of the 30,000 items
+        (16,262 rows) are labeled declining.
+      </p>
+      <div class="callout is-warn">
+        <p>
+          <strong>This is a trend comparison over two already-elapsed windows, not a genuine
+          held-out future period.</strong> Both the &ldquo;last 30 days&rdquo; and the
+          &ldquo;previous 30 days&rdquo; are computed from the same export snapshot. That is a
+          meaningfully easier task than forecasting a disjoint future window, and it is a
+          limitation of the headline result &mdash; addressed further in
+          <a href="#limitations">Section 5</a> and revisited under a genuine historical/future
+          split in the ML-09 validation audit below.
+        </p>
+      </div>
+
+      <h3>Exclusions</h3>
+      <p>
+        The released data is pseudonymized: no client names, domains, URLs, private search
+        queries, credentials, or other identifying fields are present in the extract or used
+        anywhere in this paper. Rows without a keyword-context match or without sufficient
+        historical activity to compute the required aggregates were excluded upstream of the
+        modeling dataset, and content younger than 90 days was excluded so that every row has a
+        complete trailing window.
+      </p>
+
+      <h3>A genuine future-window audit (ML-09)</h3>
+      <p>
+        A later validation pass (ML-09, described in <a href="#methodology">Section 3</a> and
+        <a href="#limitations">Section 5</a>) re-ran the evaluation directly against the full
+        warehouse release using disjoint calendar windows &mdash; a historical window
+        (2026-04-02 to 2026-05-16) used only for features, and a separate future window
+        (2026-05-17 to 2026-06-30) used only to construct the label &mdash; on 108,517 rows
+        across 46 clients, grouped by <code>client_hash_id</code>. That audit is the paper's one
+        genuinely forward-looking evaluation, and its result is reported alongside the headline
+        number rather than in place of it.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="methodology" aria-labelledby="methodology-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">03</span>
+        <h2 id="methodology-h">Methodology</h2>
+      </div>
+
+      <h3>Assumptions</h3>
+      <p>
+        Historical signals may carry a directional indication of future visibility decline, but
+        they do not establish causality. Model coefficients are interpreted as associations the
+        fitted classifier relies on, not as evidence that changing a feature would change an
+        outcome. The intended use is prioritizing limited review capacity, not making an
+        autonomous content decision.
+      </p>
+
+      <h3>Features</h3>
+      <p>
+        The Logistic Regression model uses 21 numeric features drawn from the 52-column prepared
+        extract, spanning four families: historical search performance (impressions, clicks,
+        average position, days with impressions), content and freshness (word count, character
+        count, content age, days since last update), engagement (sessions, scroll rate), and
+        query breadth. Fields that directly encode the label &mdash; <code>trend_direction</code>
+        and <code>trend_pct</code> &mdash; and the most-recent-30-day impression figures used to
+        build that label are excluded from the feature set.
+      </p>
+
+      <h3>Baseline</h3>
+      <p>
+        The point of comparison is the existing ML-07 heuristic, not an arbitrary or
+        straw-man benchmark. It scores each page from a weighted combination of three signals
+        computed before the outcome window: 50% historical visibility (impressions), 30% query
+        breadth (distinct visible queries), and 20% CTR opportunity (low click-through despite
+        visibility). It outputs a single reason code, <code>VISIBILITY_REVIEW</code>, and a
+        single recommended action, <code>REVIEW_AND_REFRESH</code>. The question this paper asks
+        is whether a learned model improves on that rule for the same top-50 prioritization job
+        &mdash; not whether a model can be built at all.
+      </p>
+
+      <h3>Validation design</h3>
+      <p>
+        The model is evaluated with a client-grouped holdout using <code>GroupShuffleSplit</code>,
+        grouped by client identifier so that every content item from a given client lands
+        entirely in training or entirely in test, never split across both. This matters because
+        pages from the same client tend to share client-specific search patterns; a random
+        row-level split would let those patterns leak across the split and make the evaluation
+        optimistic. Roughly 80% of clients (23,837 rows) were used for training and 20%
+        (6,163 rows) for testing.
+      </p>
+
+      <h3>Leakage checks</h3>
+      <ul>
+        <li>All 21 model features are computed from the historical window, before the label's
+          outcome window.</li>
+        <li>The most-recent-30-day impression figures used to construct the label are used only
+          for that purpose and are not included in the feature matrix.</li>
+        <li>The client identifier is used only for grouping the train/test split &mdash; it is
+          never passed to the model as a predictive feature.</li>
+        <li>In the separate ML-09 audit, the feature set was re-checked directly against the
+          fields used to build the future-window label, and no direct overlap was found.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="results" aria-labelledby="results-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">04</span>
+        <h2 id="results-h">Results</h2>
+      </div>
+
+      <h3>Model vs. baseline</h3>
+      <div class="table-scroll">
+        <table>
+          <caption class="sr-only">Precision@50 comparison between the ML-07 baseline and the ML-08 model</caption>
+          <thead>
+            <tr><th scope="col">Approach</th><th scope="col" class="num">Precision@50</th></tr>
+          </thead>
+          <tbody>
+            <tr class="row-baseline"><td>ML-07 heuristic baseline</td><td class="num">92%</td></tr>
+            <tr class="row-model"><td>ML-08 Logistic Regression</td><td class="num">78%</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <figure>
+        <img src="assets/ml08_precision_at_50_comparison.png"
+             alt="Bar chart comparing Precision at 50 for two approaches: the Week-4 heuristic baseline at 92 percent, and the ML-08 Logistic Regression model at 78 percent. The baseline bar is noticeably taller.">
+        <figcaption>
+          Figure 1. Top-50 decision-support comparison, generated directly from the executed
+          ML-10 notebook (<code>work/figures/ml08_precision_at_50_comparison.png</code>).
+        </figcaption>
+      </figure>
+
+      <div class="callout">
+        <p>
+          <strong>Interpretation.</strong> The learned Logistic Regression model did not
+          outperform the existing heuristic baseline on the reported evaluation. Under this
+          metric and split, the simple rule ranked more genuinely declining pages into its top
+          50 than the model did.
+        </p>
+      </div>
+
+      <h3>Error profile</h3>
+      <p>
+        On the 6,163-row held-out test set, the model's predictions broke down as follows.
+        No audited ROC-AUC figure is available for this run, so none is reported here.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th scope="col">Outcome</th><th scope="col" class="num">Count</th></tr></thead>
+          <tbody>
+            <tr><td>Correct predictions</td><td class="num">3,525</td></tr>
+            <tr><td>False positives</td><td class="num">1,508</td></tr>
+            <tr><td>False negatives</td><td class="num">1,130</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Model signal summary</h3>
+      <p>
+        The ten largest Logistic Regression coefficients by magnitude, from the fitted model:
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th scope="col">Feature</th><th scope="col" class="num">Coefficient</th></tr></thead>
+          <tbody>
+            <tr><td><code>days_with_impressions</code></td><td class="num">0.7208</td></tr>
+            <tr><td><code>word_count</code></td><td class="num">0.5799</td></tr>
+            <tr><td><code>days_with_sessions</code></td><td class="num">&minus;0.4996</td></tr>
+            <tr><td><code>char_count</code></td><td class="num">&minus;0.3645</td></tr>
+            <tr><td><code>age_tier_order</code></td><td class="num">&minus;0.1671</td></tr>
+            <tr><td><code>days_since_last_update</code></td><td class="num">0.1571</td></tr>
+            <tr><td><code>content_age_days</code></td><td class="num">&minus;0.1551</td></tr>
+            <tr><td><code>impressions_prev_30d</code></td><td class="num">0.1514</td></tr>
+            <tr><td><code>avg_position</code></td><td class="num">&minus;0.1396</td></tr>
+            <tr><td><code>scroll_rate</code></td><td class="num">0.1279</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        These describe associations within the fitted classifier, not causal effects. Notably,
+        <code>days_since_last_update</code> and <code>content_age_days</code> carry opposite
+        signs, so the model does not support a simple story like &ldquo;older pages always
+        decline&rdquo; or &ldquo;refreshing always helps.&rdquo;
+      </p>
+
+      <h3>A second, stricter measurement (ML-09)</h3>
+      <p>
+        Under the genuine historical/future split described in <a href="#data">Section 2</a>
+        &mdash; a different, larger extract with a disjoint future window and a documented
+        five-feature set &mdash; the audited Precision@50 was 84%, six percentage points above
+        the original 78%. This is not directly comparable to the headline 92%/78% figures, since
+        it uses different data and features; it is reported as an additional, stricter data
+        point rather than a replacement result. See <a href="#limitations">Section 5</a>.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="limitations" aria-labelledby="limitations-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">05</span>
+        <h2 id="limitations-h">Limitations &amp; honest framing</h2>
+      </div>
+
+      <ul>
+        <li><strong>No causal inference.</strong> Coefficients and feature relationships are
+          associations learned by the classifier, not evidence that changing a feature would
+          change an outcome.</li>
+        <li><strong>The learned model underperformed the baseline.</strong> On the reported
+          evaluation, added model complexity did not translate into a better top-50 ranking than
+          the existing rule.</li>
+        <li><strong>The headline label is a trend comparison, not a forecast.</strong> As noted
+          in <a href="#data">Section 2</a>, the 92%/78% result uses a label built from two
+          already-elapsed 30-day windows at a single export snapshot, not a disjoint future
+          period. The one genuinely forward-looking measurement in this paper is the separate
+          ML-09 audit, which used different data and features and is not directly comparable.
+        </li>
+        <li><strong>A single client-grouped holdout is not proof of generalization.</strong> It
+          reduces one specific form of leakage; it does not establish how either approach would
+          perform on new clients, later time periods, or a changed search environment.</li>
+        <li><strong>The dedicated leakage-check assignment (ML-05) was not completed as a
+          standalone artifact</strong> in this repository's <code>work/notebooks/</code>
+          directory. Leakage discipline for the headline result is instead documented inline in
+          ML-08 and independently re-audited in ML-09, as described in
+          <a href="#methodology">Section 3</a>.</li>
+        <li><strong>The decline threshold (&gt;20%) is an analytical choice</strong>, not a
+          natural constant. A different threshold would relabel some items and could change both
+          the baseline's and the model's measured precision.</li>
+        <li><strong>Public-safe data restrictions.</strong> The paper works from a pseudonymized
+          extract with client names, domains, URLs, and queries removed; findings should be read
+          as a research and decision-support exercise over that pseudonymized data, not a
+          disclosure of any individual client's performance.</li>
+        <li><strong>No autonomous actions.</strong> Nothing in this paper's output triggers a
+          publish, delete, redirect, rewrite, or metadata change on its own.</li>
+      </ul>
+
+      <div class="claims-grid">
+        <div class="claims-card supported">
+          <h4>Supported by this evaluation</h4>
+          <ul>
+            <li>A directional decline-risk classifier was trained and evaluated.</li>
+            <li>Logistic Regression achieved 78% Precision@50 on the reported client-grouped
+              holdout.</li>
+            <li>The ML-07 heuristic baseline achieved 92% Precision@50 on the same holdout.</li>
+            <li>The baseline outperformed the learned model by 14 percentage points on this
+              metric.</li>
+            <li>Under a separate, genuinely future-windowed audit with different data, the model
+              measured 84% Precision@50.</li>
+          </ul>
+        </div>
+        <div class="claims-card unsupported">
+          <h4>Not supported &mdash; not claimed</h4>
+          <ul>
+            <li>That any feature causes visibility decline.</li>
+            <li>That the model prevents traffic loss.</li>
+            <li>That either approach generalizes to unseen clients or future periods.</li>
+            <li>That the model is superior to the existing baseline.</li>
+            <li>That any output here should trigger an automated SEO action.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="recommendations" aria-labelledby="recommendations-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">06</span>
+        <h2 id="recommendations-h">Ranked recommendations</h2>
+      </div>
+
+      <p class="lede">
+        Whichever score a team decides to trust, the output feeds the same ranked review
+        playbook. A rank identifies <strong>what to investigate</strong>, never what to
+        automatically change.
+      </p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="num">Rank</th>
+              <th scope="col">Signal / condition</th>
+              <th scope="col">Recommended action</th>
+              <th scope="col">Priority</th>
+              <th scope="col">Reason code</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="num">1</td>
+              <td>High decline risk with supporting historical evidence</td>
+              <td>Investigate for potential visibility decline; determine whether a refresh is warranted</td>
+              <td><span class="priority-tag high">High</span></td>
+              <td><code>HIGH_DECLINE_RISK</code></td>
+            </tr>
+            <tr>
+              <td class="num">2</td>
+              <td>Strong freshness / update signal</td>
+              <td>Review whether the content needs updating</td>
+              <td><span class="priority-tag high">High</span></td>
+              <td><code>FRESHNESS_SIGNAL</code></td>
+            </tr>
+            <tr>
+              <td class="num">3</td>
+              <td>Engagement or search-performance signal</td>
+              <td>Review engagement and historical search-performance indicators</td>
+              <td><span class="priority-tag medium">Medium</span></td>
+              <td><code>ENGAGEMENT_SIGNAL</code></td>
+            </tr>
+            <tr>
+              <td class="num">4</td>
+              <td>Content-depth signal</td>
+              <td>Review depth, relevance, and whether the page serves its search intent</td>
+              <td><span class="priority-tag medium">Medium</span></td>
+              <td><code>CONTENT_DEPTH_SIGNAL</code></td>
+            </tr>
+            <tr>
+              <td class="num">5</td>
+              <td>Model probability near 0.50</td>
+              <td>Escalate for human review; the model is uncertain</td>
+              <td><span class="priority-tag low">Low</span></td>
+              <td><code>UNCERTAIN_MODEL_SCORE</code></td>
+            </tr>
+            <tr>
+              <td class="num">6</td>
+              <td>Insufficient supporting evidence</td>
+              <td>Continue monitoring rather than take immediate action</td>
+              <td><span class="priority-tag low">Low</span></td>
+              <td><code>INSUFFICIENT_EVIDENCE</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout is-warn">
+        <p>
+          <strong>Recommendations do not automatically trigger</strong> publishing, deletion,
+          redirects, rewriting, title or metadata changes, or any other high-impact SEO decision.
+          Every rank is an instruction to look, not to act.
+        </p>
+      </div>
+
+      <h3>Decay / refresh note</h3>
+      <p>
+        <code>days_since_last_update</code> and <code>content_age_days</code> carried opposite
+        signs in the fitted model (see <a href="#results">Section 4</a>), so the playbook does
+        not treat &ldquo;this page is old&rdquo; as a standalone reason to refresh it. Freshness
+        is a hypothesis to check against the actual page, not a conclusion.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="reproducibility" aria-labelledby="repro-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">07</span>
+        <h2 id="repro-h">Reproducibility</h2>
+      </div>
+
+      <p>
+        Every figure and table above comes from the notebooks below, all committed in the public
+        repository behind this page.
+      </p>
+
+      <ul class="link-list">
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship">Repository root &mdash; MuhammadShayan8401/flyrank-ml-internship</a>
+          <span class="path">github.com/MuhammadShayan8401/flyrank-ml-internship</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/notebooks/capstone.ipynb">Capstone notebook (ML-11) &mdash; mirrors this page section by section</a>
+          <span class="path">work/notebooks/capstone.ipynb</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/notebooks/w04_baseline_score.ipynb">ML-07 &mdash; baseline rule and ranked queue</a>
+          <span class="path">work/notebooks/w04_baseline_score.ipynb</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/notebooks/w05_model.ipynb">ML-08 &mdash; Logistic Regression model, training and comparison</a>
+          <span class="path">work/notebooks/w05_model.ipynb</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/notebooks/w06_validation_audit.ipynb">ML-09 &mdash; validation and claim audit (the future-window re-run)</a>
+          <span class="path">work/notebooks/w06_validation_audit.ipynb</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/notebooks/w07_action_playbook.ipynb">ML-10 &mdash; ranked action playbook and exported figure</a>
+          <span class="path">work/notebooks/w07_action_playbook.ipynb</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/figures/ml08_precision_at_50_comparison.png">Precision@50 comparison chart</a>
+          <span class="path">work/figures/ml08_precision_at_50_comparison.png</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/notebooks/w07_action_playbook.ipynb">Ranked validation review queue &mdash; regenerated by cell 16 of ML-10</a>
+          <span class="path">work/outputs/ranked_content_action_queue.csv (gitignored by design; regenerate by running ML-10 locally)</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/work/metrics/ml10_playbook_receipts.json">Evaluation receipts (JSON)</a>
+          <span class="path">work/metrics/ml10_playbook_receipts.json</span>
+        </li>
+        <li>
+          <a href="https://github.com/MuhammadShayan8401/flyrank-ml-internship/blob/main/docs/data-dictionary.md">Data dictionary &mdash; all columns, meanings, and known gotchas</a>
+          <span class="path">docs/data-dictionary.md</span>
+        </li>
+      </ul>
+
+      <p>
+        Notebooks were run in Google Colab against the anonymized starter extract
+        (<code>data/raw/content_refresh_anonymized.csv</code>) and, for the ML-09 audit, against
+        the gated <code>FlyRank/internship-warehouse</code> release on Hugging Face via DuckDB.
+        Exact random seeds and library versions for these runs are not recorded in the committed
+        notebooks and are not reported here rather than reconstructed after the fact.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="acknowledgments" aria-labelledby="ack-h">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="section-num">08</span>
+        <h2 id="ack-h">Acknowledgments &amp; data credit</h2>
+      </div>
+
+      <div class="ack">
+        <p>
+          This research was completed as part of the FlyRank ML Internship, Applied Search
+          Intelligence track.
+        </p>
+        <p class="credit-phrase">
+          <a href="https://flyrank.ai">Built on the FlyRank ML Internship dataset</a>.
+        </p>
+        <p>
+          Thanks to the FlyRank ML Internship team for the pseudonymized data release, the
+          reference pipeline this capstone builds on, and the skills library that shaped how its
+          claims are written.
+        </p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap-wide">
+    <span>&copy; 2026 Muhammad Shayan Ahmed</span>
+    <span><a href="https://github.com/MuhammadShayan8401">github.com/MuhammadShayan8401</a></span>
+  </div>
+</footer>
+
+</body>
+</html>
